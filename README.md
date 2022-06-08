@@ -7,7 +7,7 @@ In this work, we propose a logical reasoning network: LogiRec to capture the asy
 
 ## Examples to run LogiRec:
 
-bash example.sh
+	bash example.sh
 
 
 
