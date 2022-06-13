@@ -77,15 +77,13 @@ class Regularizer():
 
 class KGReasoning(nn.Module):
     def __init__(self, nentity, nrelation, hidden_dim, gamma, 
-                 geo, test_batch_size=1,
-                 box_mode=None, use_cuda=False,
+                 test_batch_size=1, use_cuda=False,
                  query_name_dict=None, beta_mode=None):
         super(KGReasoning, self).__init__()
         self.nentity = nentity
         self.nrelation = nrelation
         self.hidden_dim = hidden_dim
         self.epsilon = 2.0
-        self.geo = geo
         self.use_cuda = use_cuda
         self.batch_entity_range = torch.arange(nentity).to(torch.float).repeat(test_batch_size, 1).cuda() if self.use_cuda else torch.arange(nentity).to(torch.float).repeat(test_batch_size, 1) # used in test_step
         self.query_name_dict = query_name_dict
@@ -215,7 +213,7 @@ class KGReasoning(nn.Module):
         print("queries: {}".format(queries))
         print("idx: {}".format(idx))
         all_relation_flag = True
-        for ele in query_structure[-1]: # whether the current query tree has merged to one branch and only need to do relation traversal, e.g., path queries or conjunctive queries after the intersection
+        for ele in query_structure[-1]:
             if ele not in ['r', 'n']:
                 all_relation_flag = False
                 break
@@ -252,25 +250,6 @@ class KGReasoning(nn.Module):
         logit = self.gamma - torch.norm(torch.distributions.kl.kl_divergence(entity_dist, query_dist), p=1, dim=-1)
         return logit
 
-
-    def transform_union_query(self, queries, query_structure):
-        '''
-        transform 2u queries to two 1p queries
-        transform up queries to two 2p queries
-        '''
-        if self.query_name_dict[query_structure] == '2u-DNF':
-            queries = queries[:, :-1] # remove union -1
-        elif self.query_name_dict[query_structure] == 'up-DNF':
-            queries = torch.cat([torch.cat([queries[:, :2], queries[:, 5:6]], dim=1), torch.cat([queries[:, 2:4], queries[:, 5:6]], dim=1)], dim=1)
-        queries = torch.reshape(queries, [queries.shape[0]*2, -1])
-        return queries
-
-
-    def transform_union_structure(self, query_structure):
-        if self.query_name_dict[query_structure] == '2u-DNF':
-            return ('e', ('r',))
-        elif self.query_name_dict[query_structure] == 'up-DNF':
-            return ('e', ('r', 'r'))
 
 
     @staticmethod
@@ -340,24 +319,7 @@ class KGReasoning(nn.Module):
                 queries_unflatten = [queries_unflatten[i] for i in idxs]
                 query_structures = [query_structures[i] for i in idxs]
                 argsort = torch.argsort(negative_logit, dim=1, descending=True)
-                ranking = argsort.clone().to(torch.float)
                 ranking_list = argsort[0].tolist()
-
-                if len(argsort) == args.test_batch_size: # if it is the same shape with test_batch_size, we can reuse batch_entity_range without creating a new one
-                    ranking = ranking.scatter_(1, argsort, model.batch_entity_range) # achieve the ranking of all entities
-                else: # otherwise, create a new torch Tensor for batch_entity_range
-                    if args.cuda:
-                        ranking = ranking.scatter_(1, 
-                                                   argsort, 
-                                                   torch.arange(model.nentity).to(torch.float).repeat(argsort.shape[0], 
-                                                                                                      1).cuda()
-                                                   ) # achieve the ranking of all entities
-                    else:
-                        ranking = ranking.scatter_(1, 
-                                                   argsort, 
-                                                   torch.arange(model.nentity).to(torch.float).repeat(argsort.shape[0], 
-                                                                                                      1)
-                                                   ) # achieve the ranking of all entities
 
                 for idx, (i, query, query_structure) in enumerate(zip(argsort[:, 0], queries_unflatten, query_structures)):
                     hard_answer = answers[query]

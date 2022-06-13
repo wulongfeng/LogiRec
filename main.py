@@ -61,7 +61,7 @@ def parse_args(args=None):
     parser.add_argument('--nentity', type=int, default=0, help='DO NOT MANUALLY SET')
     parser.add_argument('--nrelation', type=int, default=0, help='DO NOT MANUALLY SET')
     
-    parser.add_argument('--geo', default='vec', type=str, choices=['vec', 'box', 'beta'], help='the reasoning model, vec for GQE, box for Query2box, beta for BetaE')
+    #parser.add_argument('--geo', default='vec', type=str, choices=['vec', 'box', 'beta'], help='the reasoning model, vec for GQE, box for Query2box, beta for BetaE')
     parser.add_argument('--print_on_screen', action='store_true')
     
     parser.add_argument('--tasks', default='1p.2p.3p.2i.3i.ip.hip.pi.2in.3in.inp.pin.pni.2u.up', type=str, help="tasks connected by dot, refer to the BetaE paper for detailed meaning and structure of each task")
@@ -72,6 +72,7 @@ def parse_args(args=None):
     parser.add_argument('-evu', '--evaluate_union', default="DNF", type=str, choices=['DNF', 'DM'], help='the way to evaluate union queries, transform it to disjunctive normal form (DNF) or use the De Morgan\'s laws (DM)')
 
     return parser.parse_args(args)
+
 
 def save_model(model, optimizer, save_variable_list, args):
     '''
@@ -89,6 +90,7 @@ def save_model(model, optimizer, save_variable_list, args):
         'optimizer_state_dict': optimizer.state_dict()},
         os.path.join(args.save_path, 'checkpoint')
     )
+
 
 def set_logger(args):
     '''
@@ -113,12 +115,14 @@ def set_logger(args):
         console.setFormatter(formatter)
         logging.getLogger('').addHandler(console)
 
+
 def log_metrics(mode, step, metrics):
     '''
     Print the evaluation logs
     '''
     for metric in metrics:
         logging.info('%s %s at step %d: %f' % (mode, metric, step, metrics[metric]))
+
 
 def evaluate(model, tp_answers, fn_answers, args, dataloader, query_name_dict, mode, step, writer):
     '''
@@ -147,7 +151,8 @@ def evaluate(model, tp_answers, fn_answers, args, dataloader, query_name_dict, m
     log_metrics('%s average'%mode, step, average_metrics)
 
     return all_metrics
-        
+
+
 def load_data(args, tasks):
     '''
     Load queries and remove queries not in tasks
@@ -180,11 +185,6 @@ def load_data(args, tasks):
 def main(args):
     set_global_seed(args.seed)
     tasks = args.tasks.split('.')
-    for task in tasks:
-        if 'n' in task and args.geo in ['box', 'vec']:
-            assert False, "Q2B and GQE cannot handle queries with negation"
-    if args.evaluate_union == 'DM':
-        assert args.geo == 'beta', "only BetaE supports modeling union using De Morgan's Laws"
 
     cur_time = parse_time()
     if args.prefix is None:
@@ -194,12 +194,8 @@ def main(args):
 
     print ("overwritting args.save_path")
     args.save_path = os.path.join(prefix, args.data_path.split('/')[-1], args.tasks, args.geo)
-    if args.geo in ['box']:
-        tmp_str = "g-{}-mode-{}".format(args.gamma, args.box_mode)
-    elif args.geo in ['vec']:
-        tmp_str = "g-{}".format(args.gamma)
-    elif args.geo == 'beta':
-        tmp_str = "g-{}-mode-{}".format(args.gamma, args.beta_mode)
+
+    tmp_str = "g-{}-mode-{}".format(args.gamma, args.beta_mode)
 
     if args.checkpoint_path is not None:
         args.save_path = args.checkpoint_path
@@ -240,7 +236,7 @@ def main(args):
             logging.info(query_name_dict[query_structure]+": "+str(len(train_queries[query_structure])))
         train_path_queries = defaultdict(set)
         train_other_queries = defaultdict(set)
-        path_list = ['1p', '2p', '3p', 'hip']
+        path_list = ['1p', '2in', 'hip']
         for query_structure in train_queries:
             if query_name_dict[query_structure] in path_list:
                 train_path_queries[query_structure] = train_queries[query_structure]
@@ -304,9 +300,7 @@ def main(args):
         nrelation=nrelation,
         hidden_dim=args.hidden_dim,
         gamma=args.gamma,
-        geo=args.geo,
         use_cuda = args.cuda,
-        box_mode=eval_tuple(args.box_mode),
         beta_mode = eval_tuple(args.beta_mode),
         test_batch_size=args.test_batch_size,
         query_name_dict = query_name_dict
@@ -361,7 +355,6 @@ def main(args):
     
     if args.do_train:
         training_logs = []
-        # #Training Loop
         for step in range(init_step, args.max_steps):
             if step == 2*args.max_steps//3:
                 args.valid_steps *= 4
