@@ -22,26 +22,12 @@ from collections import defaultdict
 from tqdm import tqdm
 from util import flatten_query, list2tuple, parse_time, set_global_seed, eval_tuple
 
-query_name_dict = {('e',('r',)): '1p', 
-                    ('e', ('r', 'r')): '2p',
-                    ('e', ('r', 'r', 'r')): '3p',
-                    (('e', ('r',)), ('e', ('r',))): '2i',
-                    (('e', ('r',)), ('e', ('r',)), ('e', ('r',))): '3i',
-                    ((('e', ('r',)), ('e', ('r',))), ('r',)): 'ip',
+query_name_dict = {('e',('r',)): '1p',
                     ((('e', ('h',)), ('e', ('h',))), ('r',)): 'hip',
-                    (('e', ('r', 'r')), ('e', ('r',))): 'pi',
-                    (('e', ('r',)), ('e', ('r', 'n'))): '2in',
-                    (('e', ('r',)), ('e', ('r',)), ('e', ('r', 'n'))): '3in',
-                    ((('e', ('r',)), ('e', ('r', 'n'))), ('r',)): 'inp',
-                    (('e', ('r', 'r')), ('e', ('r', 'n'))): 'pin',
-                    (('e', ('r', 'r', 'n')), ('e', ('r',))): 'pni',
-                    (('e', ('r',)), ('e', ('r',)), ('u',)): '2u-DNF',
-                    ((('e', ('r',)), ('e', ('r',)), ('u',)), ('r',)): 'up-DNF',
-                    ((('e', ('r', 'n')), ('e', ('r', 'n'))), ('n',)): '2u-DM',
-                    ((('e', ('r', 'n')), ('e', ('r', 'n'))), ('n', 'r')): 'up-DM'
+                    (('e', ('r',)), ('e', ('r', 'n'))): '2in'
                 }
 name_query_dict = {value: key for key, value in query_name_dict.items()}
-all_tasks = list(name_query_dict.keys()) # ['1p', '2p', '3p', '2i', '3i', 'ip', 'pi', '2in', '3in', 'inp', 'pin', 'pni', '2u-DNF', '2u-DM', 'up-DNF', 'up-DM']
+all_tasks = list(name_query_dict.keys()) # ['1p', 'hip', '2in']
 
 def parse_args(args=None):
     parser = argparse.ArgumentParser(
@@ -81,7 +67,6 @@ def parse_args(args=None):
     parser.add_argument('--tasks', default='1p.2p.3p.2i.3i.ip.hip.pi.2in.3in.inp.pin.pni.2u.up', type=str, help="tasks connected by dot, refer to the BetaE paper for detailed meaning and structure of each task")
     parser.add_argument('--seed', default=0, type=int, help="random seed")
     parser.add_argument('-betam', '--beta_mode', default="(1600,2)", type=str, help='(hidden_dim,num_layer) for BetaE relational projection')
-    parser.add_argument('-boxm', '--box_mode', default="(none,0.02)", type=str, help='(offset activation,center_reg) for Query2box, center_reg balances the in_box dist and out_box dist')
     parser.add_argument('--prefix', default=None, type=str, help='prefix of the log path')
     parser.add_argument('--checkpoint_path', default=None, type=str, help='path for loading the checkpoints')
     parser.add_argument('-evu', '--evaluate_union', default="DNF", type=str, choices=['DNF', 'DM'], help='the way to evaluate union queries, transform it to disjunctive normal form (DNF) or use the De Morgan\'s laws (DM)')
@@ -142,8 +127,7 @@ def evaluate(model, tp_answers, fn_answers, args, dataloader, query_name_dict, m
     average_metrics = defaultdict(float)
     all_metrics = defaultdict(float)
 
-    # metrics = model.test_step(model, tp_answers, fn_answers, args, dataloader, query_name_dict)
-    metrics = model.another_test_step(model, tp_answers, fn_answers, args, dataloader, query_name_dict)
+    metrics = model.test_step(model, tp_answers, fn_answers, args, dataloader, query_name_dict)
     num_query_structures = 0
     num_queries = 0
     for query_structure in metrics:
@@ -172,11 +156,9 @@ def load_data(args, tasks):
     train_queries = pickle.load(open(os.path.join(args.data_path, "train-queries.pkl"), 'rb'))
     train_answers = pickle.load(open(os.path.join(args.data_path, "train-answers.pkl"), 'rb'))
     valid_queries = pickle.load(open(os.path.join(args.data_path, "valid-queries.pkl"), 'rb'))
-    valid_hard_answers = pickle.load(open(os.path.join(args.data_path, "valid-hard-answers.pkl"), 'rb'))
-    valid_easy_answers = pickle.load(open(os.path.join(args.data_path, "valid-easy-answers.pkl"), 'rb'))
+    valid_answers = pickle.load(open(os.path.join(args.data_path, "valid-answers.pkl"), 'rb'))
     test_queries = pickle.load(open(os.path.join(args.data_path, "test-queries.pkl"), 'rb'))
-    test_hard_answers = pickle.load(open(os.path.join(args.data_path, "test-hard-answers.pkl"), 'rb'))
-    test_easy_answers = pickle.load(open(os.path.join(args.data_path, "test-easy-answers.pkl"), 'rb'))
+    test_answers = pickle.load(open(os.path.join(args.data_path, "test-answers.pkl"), 'rb'))
     
     # remove tasks not in args.tasks
     for name in all_tasks:
@@ -192,8 +174,8 @@ def load_data(args, tasks):
                 del valid_queries[query_structure]
             if query_structure in test_queries:
                 del test_queries[query_structure]
+    return train_queries, train_answers, valid_queries, valid_answers, test_queries, test_answers
 
-    return train_queries, train_answers, valid_queries, valid_hard_answers, valid_easy_answers, test_queries, test_hard_answers, test_easy_answers
 
 def main(args):
     set_global_seed(args.seed)
@@ -250,7 +232,7 @@ def main(args):
     logging.info('#max steps: %d' % args.max_steps)
     logging.info('Evaluate unoins using: %s' % args.evaluate_union)
 
-    train_queries, train_answers, valid_queries, valid_hard_answers, valid_easy_answers, test_queries, test_hard_answers, test_easy_answers = load_data(args, tasks)        
+    train_queries, train_answers, valid_queries, valid_answers, test_queries, test_answers = load_data(args, tasks)
 
     logging.info("Training info:")
     if args.do_train:
@@ -415,11 +397,11 @@ def main(args):
             if step % args.valid_steps == 0 and step > 0:
                 if args.do_valid:
                     logging.info('Evaluating on Valid Dataset...')
-                    valid_all_metrics = evaluate(model, valid_easy_answers, valid_hard_answers, args, valid_dataloader, query_name_dict, 'Valid', step, writer)
+                    valid_all_metrics = evaluate(model, valid_answers, args, valid_dataloader, query_name_dict, 'Valid', step, writer)
 
                 if args.do_test:
                     logging.info('Evaluating on Test Dataset...')
-                    test_all_metrics = evaluate(model, test_easy_answers, test_hard_answers, args, test_dataloader, query_name_dict, 'Test', step, writer)
+                    test_all_metrics = evaluate(model, test_answers, args, test_dataloader, query_name_dict, 'Test', step, writer)
                 
             if step % args.log_steps == 0:
                 metrics = {}
@@ -444,7 +426,7 @@ def main(args):
 
     if args.do_test:
         logging.info('Evaluating on Test Dataset...')
-        test_all_metrics = evaluate(model, test_easy_answers, test_hard_answers, args, test_dataloader, query_name_dict, 'Test', step, writer)
+        test_all_metrics = evaluate(model, test_answers, args, test_dataloader, query_name_dict, 'Test', step, writer)
 
     logging.info("Training finished!!")
 

@@ -21,12 +21,8 @@ from tqdm import tqdm
 import os
 from metrics import hit_at_k, ndcg_at_k, MRR
 
-def Identity(x):
-    return x
-
 
 class BetaIntersection(nn.Module):
-
     def __init__(self, dim):
         super(BetaIntersection, self).__init__()
         self.dim = dim
@@ -133,72 +129,21 @@ class KGReasoning(nn.Module):
                                              num_layers)
 
     def forward(self, positive_sample, negative_sample, subsampling_weight, batch_queries_dict, batch_idxs_dict):
-
-        return self.forward_beta(positive_sample, negative_sample, subsampling_weight, batch_queries_dict, batch_idxs_dict)
-
-
-    def embed_query_beta(self, queries, query_structure, idx):
-        '''
-        Iterative embed a batch of queries with same structure using BetaE
-        queries: a flattened batch of queries
-        '''
-        print("query structure: {}, type: {}, length: {}".format(query_structure, type(query_structure), len(query_structure)))
-        print("queries: {}".format(queries))
-        print("idx: {}".format(idx))
-        all_relation_flag = True
-        for ele in query_structure[-1]: # whether the current query tree has merged to one branch and only need to do relation traversal, e.g., path queries or conjunctive queries after the intersection
-            if ele not in ['r', 'n']:
-                all_relation_flag = False
-                break
-        if all_relation_flag:
-            if query_structure[0] == 'e':
-                embedding = self.entity_regularizer(torch.index_select(self.entity_embedding, dim=0, index=queries[:, idx]))
-                idx += 1
-            else:
-                alpha_embedding, beta_embedding, idx = self.embed_query_beta(queries, query_structure[0], idx)
-                embedding = torch.cat([alpha_embedding, beta_embedding], dim=-1)
-            for i in range(len(query_structure[-1])):
-                if query_structure[-1][i] == 'n':
-                    assert (queries[:, idx] == -2).all()
-                    embedding = 1./embedding
-                else:
-                    r_embedding = torch.index_select(self.relation_embedding, dim=0, index=queries[:, idx])
-                    embedding = self.projection_net(embedding, r_embedding)
-                idx += 1
-            alpha_embedding, beta_embedding = torch.chunk(embedding, 2, dim=-1)
-        else:
-            alpha_embedding_list = []
-            beta_embedding_list = []
-            for i in range(len(query_structure)):
-                alpha_embedding, beta_embedding, idx = self.embed_query_beta(queries, query_structure[i], idx)
-                alpha_embedding_list.append(alpha_embedding)
-                beta_embedding_list.append(beta_embedding)
-            alpha_embedding, beta_embedding = self.center_net(torch.stack(alpha_embedding_list), torch.stack(beta_embedding_list))
-
-        return alpha_embedding, beta_embedding, idx
-
-    def cal_logit_beta(self, entity_embedding, query_dist):
-        alpha_embedding, beta_embedding = torch.chunk(entity_embedding, 2, dim=-1)
-        entity_dist = torch.distributions.beta.Beta(alpha_embedding, beta_embedding)
-        logit = self.gamma - torch.norm(torch.distributions.kl.kl_divergence(entity_dist, query_dist), p=1, dim=-1)
-        return logit
-
-    def forward_beta(self, positive_sample, negative_sample, subsampling_weight, batch_queries_dict, batch_idxs_dict):
         all_idxs, all_alpha_embeddings, all_beta_embeddings = [], [], []
         all_union_idxs, all_union_alpha_embeddings, all_union_beta_embeddings = [], [], []
         for query_structure in batch_queries_dict:
             if 'u' in self.query_name_dict[query_structure] and 'DNF' in self.query_name_dict[query_structure]:
                 alpha_embedding, beta_embedding, _ = \
-                    self.embed_query_beta(self.transform_union_query(batch_queries_dict[query_structure], 
-                                                                     query_structure), 
-                                          self.transform_union_structure(query_structure), 
+                    self.embed_query_beta(self.transform_union_query(batch_queries_dict[query_structure],
+                                                                     query_structure),
+                                          self.transform_union_structure(query_structure),
                                           0)
                 all_union_idxs.extend(batch_idxs_dict[query_structure])
                 all_union_alpha_embeddings.append(alpha_embedding)
                 all_union_beta_embeddings.append(beta_embedding)
             else:
-                alpha_embedding, beta_embedding, _ = self.embed_query_beta(batch_queries_dict[query_structure], 
-                                                                           query_structure, 
+                alpha_embedding, beta_embedding, _ = self.embed_query_beta(batch_queries_dict[query_structure],
+                                                                           query_structure,
                                                                            0)
                 all_idxs.extend(batch_idxs_dict[query_structure])
                 all_alpha_embeddings.append(alpha_embedding)
@@ -260,6 +205,54 @@ class KGReasoning(nn.Module):
 
         return positive_logit, negative_logit, subsampling_weight, all_idxs+all_union_idxs
 
+
+    def embed_query_beta(self, queries, query_structure, idx):
+        '''
+        Iterative embed a batch of queries with same structure using BetaE
+        queries: a flattened batch of queries
+        '''
+        print("query structure: {}, type: {}, length: {}".format(query_structure, type(query_structure), len(query_structure)))
+        print("queries: {}".format(queries))
+        print("idx: {}".format(idx))
+        all_relation_flag = True
+        for ele in query_structure[-1]: # whether the current query tree has merged to one branch and only need to do relation traversal, e.g., path queries or conjunctive queries after the intersection
+            if ele not in ['r', 'n']:
+                all_relation_flag = False
+                break
+        if all_relation_flag:
+            if query_structure[0] == 'e':
+                embedding = self.entity_regularizer(torch.index_select(self.entity_embedding, dim=0, index=queries[:, idx]))
+                idx += 1
+            else:
+                alpha_embedding, beta_embedding, idx = self.embed_query_beta(queries, query_structure[0], idx)
+                embedding = torch.cat([alpha_embedding, beta_embedding], dim=-1)
+            for i in range(len(query_structure[-1])):
+                if query_structure[-1][i] == 'n':
+                    assert (queries[:, idx] == -2).all()
+                    embedding = 1./embedding
+                else:
+                    r_embedding = torch.index_select(self.relation_embedding, dim=0, index=queries[:, idx])
+                    embedding = self.projection_net(embedding, r_embedding)
+                idx += 1
+            alpha_embedding, beta_embedding = torch.chunk(embedding, 2, dim=-1)
+        else:
+            alpha_embedding_list = []
+            beta_embedding_list = []
+            for i in range(len(query_structure)):
+                alpha_embedding, beta_embedding, idx = self.embed_query_beta(queries, query_structure[i], idx)
+                alpha_embedding_list.append(alpha_embedding)
+                beta_embedding_list.append(beta_embedding)
+            alpha_embedding, beta_embedding = self.center_net(torch.stack(alpha_embedding_list), torch.stack(beta_embedding_list))
+
+        return alpha_embedding, beta_embedding, idx
+
+    def cal_logit_beta(self, entity_embedding, query_dist):
+        alpha_embedding, beta_embedding = torch.chunk(entity_embedding, 2, dim=-1)
+        entity_dist = torch.distributions.beta.Beta(alpha_embedding, beta_embedding)
+        logit = self.gamma - torch.norm(torch.distributions.kl.kl_divergence(entity_dist, query_dist), p=1, dim=-1)
+        return logit
+
+
     def transform_union_query(self, queries, query_structure):
         '''
         transform 2u queries to two 1p queries
@@ -271,6 +264,7 @@ class KGReasoning(nn.Module):
             queries = torch.cat([torch.cat([queries[:, :2], queries[:, 5:6]], dim=1), torch.cat([queries[:, 2:4], queries[:, 5:6]], dim=1)], dim=1)
         queries = torch.reshape(queries, [queries.shape[0]*2, -1])
         return queries
+
 
     def transform_union_structure(self, query_structure):
         if self.query_name_dict[query_structure] == '2u-DNF':
@@ -320,7 +314,7 @@ class KGReasoning(nn.Module):
         return log
 
     @staticmethod
-    def test_step(model, easy_answers, hard_answers, args, test_dataloader, query_name_dict, save_result=False, save_str="", save_empty=False):
+    def test_step(model, answers, args, test_dataloader, query_name_dict, save_result=False, save_str="", save_empty=False):
         model.eval()
 
         step = 0
@@ -366,7 +360,7 @@ class KGReasoning(nn.Module):
                                                    ) # achieve the ranking of all entities
 
                 for idx, (i, query, query_structure) in enumerate(zip(argsort[:, 0], queries_unflatten, query_structures)):
-                    hard_answer = hard_answers[query]
+                    hard_answer = answers[query]
                     num_hard = len(hard_answer)
 
                     h3 = hit_at_k(hard_answer, ranking_list, 3)
