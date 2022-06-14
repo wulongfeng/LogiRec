@@ -64,12 +64,12 @@ def parse_args(args=None):
     #parser.add_argument('--geo', default='vec', type=str, choices=['vec', 'box', 'beta'], help='the reasoning model, vec for GQE, box for Query2box, beta for BetaE')
     parser.add_argument('--print_on_screen', action='store_true')
     
-    parser.add_argument('--tasks', default='1p.2p.3p.2i.3i.ip.hip.pi.2in.3in.inp.pin.pni.2u.up', type=str, help="tasks connected by dot, refer to the BetaE paper for detailed meaning and structure of each task")
+    parser.add_argument('--tasks', default='1p.hip.2in', type=str, help="tasks connected by dot, refer to the BetaE paper for detailed meaning and structure of each task")
     parser.add_argument('--seed', default=0, type=int, help="random seed")
     parser.add_argument('-betam', '--beta_mode', default="(1600,2)", type=str, help='(hidden_dim,num_layer) for BetaE relational projection')
     parser.add_argument('--prefix', default=None, type=str, help='prefix of the log path')
     parser.add_argument('--checkpoint_path', default=None, type=str, help='path for loading the checkpoints')
-    parser.add_argument('-evu', '--evaluate_union', default="DNF", type=str, choices=['DNF', 'DM'], help='the way to evaluate union queries, transform it to disjunctive normal form (DNF) or use the De Morgan\'s laws (DM)')
+    #parser.add_argument('-evu', '--evaluate_union', default="DNF", type=str, choices=['DNF', 'DM'], help='the way to evaluate union queries, transform it to disjunctive normal form (DNF) or use the De Morgan\'s laws (DM)')
 
     return parser.parse_args(args)
 
@@ -148,9 +148,7 @@ def evaluate(model, tp_answers, fn_answers, args, dataloader, query_name_dict, m
         average_metrics[metric] /= num_query_structures
         writer.add_scalar("_".join([mode, 'average', metric]), average_metrics[metric], step)
         all_metrics["_".join(["average", metric])] = average_metrics[metric]
-    log_metrics('%s average'%mode, step, average_metrics)
-
-    return all_metrics
+    log_metrics('%s average'% mode, step, average_metrics)
 
 
 def load_data(args, tasks):
@@ -167,12 +165,8 @@ def load_data(args, tasks):
     
     # remove tasks not in args.tasks
     for name in all_tasks:
-        if 'u' in name:
-            name, evaluate_union = name.split('-')
-        else:
-            evaluate_union = args.evaluate_union
-        if name not in tasks or evaluate_union != args.evaluate_union:
-            query_structure = name_query_dict[name if 'u' not in name else '-'.join([name, evaluate_union])]
+        if name not in tasks:
+            query_structure = name_query_dict[name]
             if query_structure in train_queries:
                 del train_queries[query_structure]
             if query_structure in valid_queries:
@@ -221,12 +215,10 @@ def main(args):
     args.nrelation = nrelation
     
     logging.info('-------------------------------'*3)
-    logging.info('Geo: %s' % args.geo)
     logging.info('Data Path: %s' % args.data_path)
     logging.info('#entity: %d' % nentity)
     logging.info('#relation: %d' % nrelation)
     logging.info('#max steps: %d' % args.max_steps)
-    logging.info('Evaluate unoins using: %s' % args.evaluate_union)
 
     train_queries, train_answers, valid_queries, valid_answers, test_queries, test_answers = load_data(args, tasks)
 
@@ -234,15 +226,10 @@ def main(args):
     if args.do_train:
         for query_structure in train_queries:
             logging.info(query_name_dict[query_structure]+": "+str(len(train_queries[query_structure])))
-        train_path_queries = defaultdict(set)
-        train_other_queries = defaultdict(set)
-        path_list = ['1p', '2in', 'hip']
-        for query_structure in train_queries:
-            if query_name_dict[query_structure] in path_list:
-                train_path_queries[query_structure] = train_queries[query_structure]
-            else:
-                train_other_queries[query_structure] = train_queries[query_structure]
-        train_path_queries = flatten_query(train_path_queries)
+        #train_path_queries = defaultdict(set)
+        #train_other_queries = defaultdict(set)
+
+        train_path_queries = flatten_query(train_queries)
         train_path_iterator = SingledirectionalOneShotIterator(DataLoader(
                                     TrainDataset(train_path_queries, nentity, nrelation, args.negative_sample_size, train_answers),
                                     batch_size=args.batch_size,
@@ -250,18 +237,7 @@ def main(args):
                                     num_workers=args.cpu_num,
                                     collate_fn=TrainDataset.collate_fn
                                 ))
-        if len(train_other_queries) > 0:
-            train_other_queries = flatten_query(train_other_queries)
-            train_other_iterator = SingledirectionalOneShotIterator(DataLoader(
-                                        TrainDataset(train_other_queries, nentity, nrelation, args.negative_sample_size, train_answers),
-                                        batch_size=args.batch_size,
-                                        shuffle=True,
-                                        num_workers=args.cpu_num,
-                                        collate_fn=TrainDataset.collate_fn
-                                    ))
-        else:
-            train_other_iterator = None
-    
+
     logging.info("Validation info:")
     if args.do_valid:
         for query_structure in valid_queries:
@@ -277,7 +253,6 @@ def main(args):
             num_workers=args.cpu_num, 
             collate_fn=TestDataset.collate_fn
         )
-
 
     logging.info("Test info:")
     if args.do_test:
@@ -300,10 +275,10 @@ def main(args):
         nrelation=nrelation,
         hidden_dim=args.hidden_dim,
         gamma=args.gamma,
-        use_cuda = args.cuda,
-        beta_mode = eval_tuple(args.beta_mode),
+        use_cuda=args.cuda,
+        beta_mode=eval_tuple(args.beta_mode),
         test_batch_size=args.test_batch_size,
-        query_name_dict = query_name_dict
+        query_name_dict=query_name_dict
     )
 
     logging.info('Model Parameter Configuration:')
@@ -336,14 +311,11 @@ def main(args):
             warm_up_steps = checkpoint['warm_up_steps']
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     else:
-        logging.info('Ramdomly Initializing %s Model...' % args.geo)
+        logging.info('Ramdomly Initializing Model...')
         init_step = 0
 
-    step = init_step 
-    if args.geo == 'box':
-        logging.info('box mode = %s' % args.box_mode)
-    elif args.geo == 'beta':
-        logging.info('beta mode = %s' % args.beta_mode)
+    step = init_step
+    logging.info('beta mode = %s' % args.beta_mode)
     logging.info('tasks = %s' % args.tasks)
     logging.info('init_step = %d' % init_step)
     if args.do_train:
@@ -359,15 +331,10 @@ def main(args):
             if step == 2*args.max_steps//3:
                 args.valid_steps *= 4
 
-            log = model.train_step(model, optimizer, train_path_iterator, args, step)
+            log = model.train_step(model, optimizer, train_path_iterator, args)
             for metric in log:
                 writer.add_scalar('path_'+metric, log[metric], step)
-            if train_other_iterator is not None:
-                log = model.train_step(model, optimizer, train_other_iterator, args, step)
-                for metric in log:
-                    writer.add_scalar('other_'+metric, log[metric], step)
-                log = model.train_step(model, optimizer, train_path_iterator, args, step)
-
+                
             training_logs.append(log)
 
             if step >= warm_up_steps:
@@ -390,11 +357,11 @@ def main(args):
             if step % args.valid_steps == 0 and step > 0:
                 if args.do_valid:
                     logging.info('Evaluating on Valid Dataset...')
-                    valid_all_metrics = evaluate(model, valid_answers, args, valid_dataloader, query_name_dict, 'Valid', step, writer)
+                    evaluate(model, valid_answers, args, valid_dataloader, query_name_dict, 'Valid', step, writer)
 
                 if args.do_test:
                     logging.info('Evaluating on Test Dataset...')
-                    test_all_metrics = evaluate(model, test_answers, args, test_dataloader, query_name_dict, 'Test', step, writer)
+                    evaluate(model, test_answers, args, test_dataloader, query_name_dict, 'Test', step, writer)
                 
             if step % args.log_steps == 0:
                 metrics = {}
@@ -419,7 +386,7 @@ def main(args):
 
     if args.do_test:
         logging.info('Evaluating on Test Dataset...')
-        test_all_metrics = evaluate(model, test_answers, args, test_dataloader, query_name_dict, 'Test', step, writer)
+        evaluate(model, test_answers, args, test_dataloader, query_name_dict, 'Test', step, writer)
 
     logging.info("Training finished!!")
 

@@ -5,20 +5,11 @@ from __future__ import division
 from __future__ import print_function
 
 import logging
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from dataloader import TestDataset, TrainDataset, SingledirectionalOneShotIterator
-import random
-import pickle
-import math
 import collections
-import itertools
-import time
 from tqdm import tqdm
-import os
 from metrics import hit_at_k, ndcg_at_k, MRR
 
 
@@ -126,57 +117,32 @@ class KGReasoning(nn.Module):
                                              self.projection_regularizer, 
                                              num_layers)
 
+
     def forward(self, positive_sample, negative_sample, subsampling_weight, batch_queries_dict, batch_idxs_dict):
         all_idxs, all_alpha_embeddings, all_beta_embeddings = [], [], []
-        all_union_idxs, all_union_alpha_embeddings, all_union_beta_embeddings = [], [], []
         for query_structure in batch_queries_dict:
-            if 'u' in self.query_name_dict[query_structure] and 'DNF' in self.query_name_dict[query_structure]:
-                alpha_embedding, beta_embedding, _ = \
-                    self.embed_query_beta(self.transform_union_query(batch_queries_dict[query_structure],
-                                                                     query_structure),
-                                          self.transform_union_structure(query_structure),
-                                          0)
-                all_union_idxs.extend(batch_idxs_dict[query_structure])
-                all_union_alpha_embeddings.append(alpha_embedding)
-                all_union_beta_embeddings.append(beta_embedding)
-            else:
-                alpha_embedding, beta_embedding, _ = self.embed_query_beta(batch_queries_dict[query_structure],
-                                                                           query_structure,
-                                                                           0)
-                all_idxs.extend(batch_idxs_dict[query_structure])
-                all_alpha_embeddings.append(alpha_embedding)
-                all_beta_embeddings.append(beta_embedding)
+            alpha_embedding, beta_embedding, _ = self.embed_query(batch_queries_dict[query_structure],
+                                                                        query_structure,
+                                                                        0)
+            all_idxs.extend(batch_idxs_dict[query_structure])
+            all_alpha_embeddings.append(alpha_embedding)
+            all_beta_embeddings.append(beta_embedding)
 
         if len(all_alpha_embeddings) > 0:
             all_alpha_embeddings = torch.cat(all_alpha_embeddings, dim=0).unsqueeze(1)
             all_beta_embeddings = torch.cat(all_beta_embeddings, dim=0).unsqueeze(1)
             all_dists = torch.distributions.beta.Beta(all_alpha_embeddings, all_beta_embeddings)
-        if len(all_union_alpha_embeddings) > 0:
-            all_union_alpha_embeddings = torch.cat(all_union_alpha_embeddings, dim=0).unsqueeze(1)
-            all_union_beta_embeddings = torch.cat(all_union_beta_embeddings, dim=0).unsqueeze(1)
-            all_union_alpha_embeddings = all_union_alpha_embeddings.view(all_union_alpha_embeddings.shape[0]//2, 2, 1, -1)
-            all_union_beta_embeddings = all_union_beta_embeddings.view(all_union_beta_embeddings.shape[0]//2, 2, 1, -1)
-            all_union_dists = torch.distributions.beta.Beta(all_union_alpha_embeddings, all_union_beta_embeddings)
 
         if type(subsampling_weight) != type(None):
-            subsampling_weight = subsampling_weight[all_idxs+all_union_idxs]
+            subsampling_weight = subsampling_weight[all_idxs]
 
         if type(positive_sample) != type(None):
             if len(all_alpha_embeddings) > 0:
-                positive_sample_regular = positive_sample[all_idxs] # positive samples for non-union queries in this batch
+                positive_sample_regular = positive_sample[all_idxs]
                 positive_embedding = self.entity_regularizer(torch.index_select(self.entity_embedding, dim=0, index=positive_sample_regular).unsqueeze(1))
-                positive_logit = self.cal_logit_beta(positive_embedding, all_dists)
+                positive_logit = self.cal_logit(positive_embedding, all_dists)
             else:
                 positive_logit = torch.Tensor([]).to(self.entity_embedding.device)
-
-            if len(all_union_alpha_embeddings) > 0:
-                positive_sample_union = positive_sample[all_union_idxs] # positive samples for union queries in this batch
-                positive_embedding = self.entity_regularizer(torch.index_select(self.entity_embedding, dim=0, index=positive_sample_union).unsqueeze(1).unsqueeze(1))
-                positive_union_logit = self.cal_logit_beta(positive_embedding, all_union_dists)
-                positive_union_logit = torch.max(positive_union_logit, dim=1)[0]
-            else:
-                positive_union_logit = torch.Tensor([]).to(self.entity_embedding.device)
-            positive_logit = torch.cat([positive_logit, positive_union_logit], dim=0)
         else:
             positive_logit = None
 
@@ -185,26 +151,16 @@ class KGReasoning(nn.Module):
                 negative_sample_regular = negative_sample[all_idxs]
                 batch_size, negative_size = negative_sample_regular.shape
                 negative_embedding = self.entity_regularizer(torch.index_select(self.entity_embedding, dim=0, index=negative_sample_regular.view(-1)).view(batch_size, negative_size, -1))
-                negative_logit = self.cal_logit_beta(negative_embedding, all_dists)
+                negative_logit = self.cal_logit(negative_embedding, all_dists)
             else:
                 negative_logit = torch.Tensor([]).to(self.entity_embedding.device)
-
-            if len(all_union_alpha_embeddings) > 0:
-                negative_sample_union = negative_sample[all_union_idxs]
-                batch_size, negative_size = negative_sample_union.shape
-                negative_embedding = self.entity_regularizer(torch.index_select(self.entity_embedding, dim=0, index=negative_sample_union.view(-1)).view(batch_size, 1, negative_size, -1))
-                negative_union_logit = self.cal_logit_beta(negative_embedding, all_union_dists)
-                negative_union_logit = torch.max(negative_union_logit, dim=1)[0]
-            else:
-                negative_union_logit = torch.Tensor([]).to(self.entity_embedding.device)
-            negative_logit = torch.cat([negative_logit, negative_union_logit], dim=0)
         else:
             negative_logit = None
 
-        return positive_logit, negative_logit, subsampling_weight, all_idxs+all_union_idxs
+        return positive_logit, negative_logit, subsampling_weight, all_idxs
 
 
-    def embed_query_beta(self, queries, query_structure, idx):
+    def embed_query(self, queries, query_structure, idx):
         '''
         Iterative embed a batch of queries with same structure using BetaE
         queries: a flattened batch of queries
@@ -222,12 +178,14 @@ class KGReasoning(nn.Module):
                 embedding = self.entity_regularizer(torch.index_select(self.entity_embedding, dim=0, index=queries[:, idx]))
                 idx += 1
             else:
-                alpha_embedding, beta_embedding, idx = self.embed_query_beta(queries, query_structure[0], idx)
+                alpha_embedding, beta_embedding, idx = self.embed_query(queries, query_structure[0], idx)
                 embedding = torch.cat([alpha_embedding, beta_embedding], dim=-1)
             for i in range(len(query_structure[-1])):
                 if query_structure[-1][i] == 'n':
                     assert (queries[:, idx] == -2).all()
                     embedding = 1./embedding
+                elif query_structure[-1][i] == 'h':
+                    assert (queries[:, idx] == -3).all()
                 else:
                     r_embedding = torch.index_select(self.relation_embedding, dim=0, index=queries[:, idx])
                     embedding = self.projection_net(embedding, r_embedding)
@@ -237,14 +195,14 @@ class KGReasoning(nn.Module):
             alpha_embedding_list = []
             beta_embedding_list = []
             for i in range(len(query_structure)):
-                alpha_embedding, beta_embedding, idx = self.embed_query_beta(queries, query_structure[i], idx)
+                alpha_embedding, beta_embedding, idx = self.embed_query(queries, query_structure[i], idx)
                 alpha_embedding_list.append(alpha_embedding)
                 beta_embedding_list.append(beta_embedding)
             alpha_embedding, beta_embedding = self.center_net(torch.stack(alpha_embedding_list), torch.stack(beta_embedding_list))
 
         return alpha_embedding, beta_embedding, idx
 
-    def cal_logit_beta(self, entity_embedding, query_dist):
+    def cal_logit(self, entity_embedding, query_dist):
         alpha_embedding, beta_embedding = torch.chunk(entity_embedding, 2, dim=-1)
         entity_dist = torch.distributions.beta.Beta(alpha_embedding, beta_embedding)
         logit = self.gamma - torch.norm(torch.distributions.kl.kl_divergence(entity_dist, query_dist), p=1, dim=-1)
@@ -253,14 +211,14 @@ class KGReasoning(nn.Module):
 
 
     @staticmethod
-    def train_step(model, optimizer, train_iterator, args, step):
+    def train_step(model, optimizer, train_iterator, args):
         model.train()
         optimizer.zero_grad()
 
         positive_sample, negative_sample, subsampling_weight, batch_queries, query_structures = next(train_iterator)
         batch_queries_dict = collections.defaultdict(list)
         batch_idxs_dict = collections.defaultdict(list)
-        for i, query in enumerate(batch_queries): # group queries with same structure
+        for i, query in enumerate(batch_queries):
             batch_queries_dict[query_structures[i]].append(query)
             batch_idxs_dict[query_structures[i]].append(i)
         for query_structure in batch_queries_dict:
@@ -291,6 +249,7 @@ class KGReasoning(nn.Module):
             'loss': loss.item(),
         }
         return log
+
 
     @staticmethod
     def test_step(model, answers, args, test_dataloader, query_name_dict, save_result=False, save_str="", save_empty=False):
