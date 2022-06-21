@@ -11,7 +11,7 @@ In this work, we propose a logical reasoning network: LogiRec to capture the asy
 
 ## Dataset
 
-We provide the processed dataset. The data in the default folder is trained for LogiRec<sub>Hybrid</sub>  model, in highOrder is for LogiRec<sub>High</sub>, and for LogiRec<sub>Low</sub> in lowOrder.
+We provide the processed dataset. The data in the default folder is trained for LogiRec<sub>Hybrid</sub>  model, highOrder is for LogiRec<sub>High</sub>, and lowOrder for LogiRec<sub>Low</sub>.
 
 
 
