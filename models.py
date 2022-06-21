@@ -165,12 +165,9 @@ class KGReasoning(nn.Module):
         Iterative embed a batch of queries with same structure using BetaE
         queries: a flattened batch of queries
         '''
-        print("query structure: {}, type: {}, length: {}".format(query_structure, type(query_structure), len(query_structure)))
-        print("queries: {}".format(queries))
-        print("idx: {}".format(idx))
         all_relation_flag = True
         for ele in query_structure[-1]:
-            if ele not in ['r', 'n']:
+            if ele not in ['r', 'n','h']:
                 all_relation_flag = False
                 break
         if all_relation_flag:

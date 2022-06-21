@@ -31,7 +31,7 @@ all_tasks = list(name_query_dict.keys()) # ['1p', 'hip', '2in']
 
 def parse_args(args=None):
     parser = argparse.ArgumentParser(
-        description='Training and Testing Knowledge Graph Embedding Models',
+        description='Training and Testing LogiRec',
         usage='train.py [<args>] [-h | --help]'
     )
 
@@ -61,7 +61,6 @@ def parse_args(args=None):
     parser.add_argument('--nentity', type=int, default=0, help='DO NOT MANUALLY SET')
     parser.add_argument('--nrelation', type=int, default=0, help='DO NOT MANUALLY SET')
     
-    #parser.add_argument('--geo', default='vec', type=str, choices=['vec', 'box', 'beta'], help='the reasoning model, vec for GQE, box for Query2box, beta for BetaE')
     parser.add_argument('--print_on_screen', action='store_true')
     
     parser.add_argument('--tasks', default='1p.hip.2in', type=str, help="tasks connected by dot, refer to the BetaE paper for detailed meaning and structure of each task")
@@ -69,7 +68,6 @@ def parse_args(args=None):
     parser.add_argument('-betam', '--beta_mode', default="(1600,2)", type=str, help='(hidden_dim,num_layer) for BetaE relational projection')
     parser.add_argument('--prefix', default=None, type=str, help='prefix of the log path')
     parser.add_argument('--checkpoint_path', default=None, type=str, help='path for loading the checkpoints')
-    #parser.add_argument('-evu', '--evaluate_union', default="DNF", type=str, choices=['DNF', 'DM'], help='the way to evaluate union queries, transform it to disjunctive normal form (DNF) or use the De Morgan\'s laws (DM)')
 
     return parser.parse_args(args)
 
@@ -187,7 +185,7 @@ def main(args):
         prefix = args.prefix
 
     print ("overwritting args.save_path")
-    args.save_path = os.path.join(prefix, args.data_path.split('/')[-1], args.tasks, args.geo)
+    args.save_path = os.path.join(prefix, args.data_path.split('/')[-1], args.tasks)
 
     tmp_str = "g-{}-mode-{}".format(args.gamma, args.beta_mode)
 
